@@ -1,0 +1,172 @@
+#!/bin/bash
+
+export TEST=cron
+COLOUR=green
+export OUTFILE=$XYMONTMP/outfile.$$
+date > $OUTFILE
+
+dir=/var/run
+config_file=/usr/local/bin/cron_wrap.conf
+file_prefix=cron_
+
+if [[ -f $config_file ]];then
+    . $config_file
+else
+    touch $config_file
+fi
+
+now=$(date +'%s')
+
+
+x_to_secs(){
+        case "$2" in
+                m | M)
+                        echo $(($1*60))
+                        ;;
+                h | H)
+                        echo $(($1*3600))
+                        ;;
+                d | D)
+                        echo $(($1*86400))
+                        ;;
+                w | W)
+                        echo $(($1*604800))
+                        ;;
+                *)
+                        exit 1
+                        ;;
+        esac
+}
+
+friendly_time() {
+  #units=(segundo minuto hora dia semana)
+  units=(segundo minuto hora dia)
+  t=${1#-}
+  #nums=($(($t % 60)) $(($t / 60 % 60)) $(($t / 3600 % 24)) $(($t / 86400 % 7)) $(($t / 604800)))
+  nums=($(($t % 60)) $(($t / 60 % 60)) $(($t / 3600 % 24)) $(($t / 86400 )) )
+
+  result=""
+  for ((idx=${#units[@]}-1;idx>=0;idx--)) {
+    ((nums[idx] == 0)) && continue;
+    result="$result ${nums[idx]}"
+    result="$result ${units[idx]}"
+    if ((nums[idx] != 1)); then
+      result="${result}s"
+    else
+      result="${result}"
+    fi
+    }
+  [[ -z "$result" ]] && result="0 seconds"
+  echo ${result# }
+}
+
+ftime() {
+  units=(m h d)
+  t=${1#-}
+  nums=($(($t / 60 % 60)) $(($t / 3600 % 24)) $(($t / 86400 )) )
+
+  result=""
+  for ((idx=${#units[@]}-1;idx>=0;idx--)) {
+    ((nums[idx] == 0)) && continue;
+    result="$result${nums[idx]}"
+    result="$result${units[idx]}"
+  }
+  [[ -z "$result" ]] && result="0m"
+  echo "${result}"
+}
+
+function liner {
+  width=68
+  if [ $# -eq 1 ];then
+    left=$(($width/2 - ((${#1}/2))))
+    if [ $((${#1} % 2)) -eq 0 ] ;then
+            right=$left
+    else
+            right=$((${left}-1))
+    fi
+    printf "%${left}s"|tr ' ' '='|sed -e "s/.$/|/"
+    echo -e -n "$1"
+    printf "%${right}s\n"|tr ' ' '='|sed -e "s/^./|/"
+  else
+    printf "%${width}s\n"|tr ' ' '='
+  fi
+}
+
+tabler(){
+    divider=====================================
+    divider=$divider$divider
+
+    header="| %-32s %-24s %-6s |\n"
+    format=" %-35s %-23s %-20s \n"
+
+    width=68
+
+    printf "$header" "Test" "Timestamp" "Maximo"
+
+    printf "%$width.${width}s\n" "$divider"
+
+    printf "$format" \
+    $1
+}
+
+for f in $(ls -1t $dir/${file_prefix}*.done);do
+        file_mtime=$(stat -c %Y $f)
+        file=$(basename $f)
+        test_name=$(echo $file|sed "s#^${file_prefix}\(.*\)\.done#\1#")
+        if [ -n "${!test_name}" ]; then
+                denom=$(echo ${!test_name}|sed 's#.*\([a-zA-Z]\)$#\1#')
+                cant=$(echo ${!test_name}|sed 's#^\([0-9]*\).*#\1#')
+                max_secs=$(x_to_secs $cant $denom)
+                file_age=$(($now - $file_mtime))
+                if [[ $file_age -gt $max_secs ]]; then
+            errors=$(($errors+1))
+                    eval error_${errors}='"$test_name $(ftime $file_age) $(ftime $max_secs)"'
+                else
+            text=${text}"$test_name $(ftime $file_age) $(ftime $max_secs) "
+                fi
+        else
+        errors=$(($errors+1))
+                eval error_${errors}='"$test_name ----- -----"'
+        grep -q "^${test_name}=" $config_file|| echo "${test_name}=" >> $config_file
+        fi
+done
+
+
+for i in $(seq 1 $errors); do
+    tmp=$(eval echo \$error_${i})
+    err_text=${err_text}${tmp}" "
+done
+
+if [[ ! -z "$errors" ]]; then
+    if (($errors != 1));then
+        liner "ERRORES" |tee -a $OUTFILE
+        tabler "$err_text" |tee -a $OUTFILE
+        echo |tee -a $OUTFILE
+        echo |tee -a $OUTFILE
+        if [[ ! -z "$text" ]];then
+            liner "OK" |tee -a $OUTFILE
+            tabler "$text" |tee -a $OUTFILE
+        fi
+        COLOUR=red
+    else
+        liner "ERROR" |tee -a $OUTFILE
+        tabler "$err_text" |tee -a $OUTFILE
+        echo |tee -a $OUTFILE
+        echo |tee -a $OUTFILE
+        if [[ ! -z "$text" ]];then
+                liner "OK" |tee -a $OUTFILE
+                tabler "$text" |tee -a $OUTFILE
+        fi
+        COLOUR=red
+    fi
+else
+    liner "Todo OK" |tee -a $OUTFILE
+    tabler "$text" |tee -a $OUTFILE
+    COLOUR=green
+fi
+
+$XYMON $XYMSRV "status $MACHINE.$TEST $COLOUR $(< $OUTFILE)"
+
+rm $OUTFILE
+
+exit 0

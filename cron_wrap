@@ -1,0 +1,26 @@
+#!/bin/bash 
+execution=$1
+proc_name=$2
+log_file="/var/log/cron_$proc_name.log"
+flag_file="/var/run/cron_$proc_name.done"
+lock_file="/var/run/cron_$proc_name.lck"
+
+if [ "$#" -ne 2 ]; then
+    echo "numero de argumentos invalido"
+else
+    [ -f $lock_file ] && echo "ya esta corriendo el proceso $proc_name" | tee -a $log_file && exit 1
+    touch "$lock_file"
+    echo -e "########################################################" | tee -a $log_file
+    $execution 2>&1 | tee -a $log_file
+    if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
+        echo `date` | tee -a $log_file
+        echo "Se corrio satisfactoriamente el proceso $proc_name" | tee -a $log_file
+        echo -e "########################################################" | tee -a $log_file
+        touch $flag_file
+    else
+        echo `date` | tee -a $log_file
+        echo "Fallo el proceso $proc_name" | tee -a $log_file
+        echo -e "########################################################" | tee -a $log_file
+    fi
+    rm -f $lock_file
+fi
